@@ -11,7 +11,7 @@
         "firebase-debug.*.log",
         "*.local"
       ],
-      "runtime": "python314"
+      "runtime": "python311"
     }
   ],
   "hosting": {

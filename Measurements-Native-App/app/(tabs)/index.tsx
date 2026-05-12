@@ -1,98 +1,268 @@
 import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  Switch,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { uploadMeasurements, type MeasurementsResponse } from '@/lib/measurementsApi';
+
+const ENDPOINT_URL = 'http://127.0.0.1:5001/live-measurements-test/us-central1/get_measurements';
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const [frontUri, setFrontUri] = useState<string | null>(null);
+  const [sideUri, setSideUri] = useState<string | null>(null);
+  const [heightCm, setHeightCm] = useState('');
+  const [useDepth, setUseDepth] = useState(false);
+  const [fastDepth, setFastDepth] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [response, setResponse] = useState<MeasurementsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
+  const pickImage = async (source: 'camera' | 'library', target: 'front' | 'side') => {
+    const permissionResult =
+      source === 'camera'
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permissionResult.granted) {
+      Alert.alert('Permission required', 'Please grant permission to access your camera or photos.');
+      return;
+    }
+
+    const result =
+      source === 'camera'
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.8,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.8,
+          });
+
+    if (result.canceled) {
+      return;
+    }
+
+    const uri = result.assets[0]?.uri;
+    if (!uri) {
+      return;
+    }
+
+    if (target === 'front') {
+      setFrontUri(uri);
+    } else {
+      setSideUri(uri);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!frontUri) {
+      Alert.alert('Missing front photo', 'Please select or take a front photo to continue.');
+      return;
+    }
+
+    const trimmedHeight = heightCm.trim();
+    const parsedHeight = trimmedHeight ? Number(trimmedHeight) : undefined;
+    if (trimmedHeight && Number.isNaN(parsedHeight)) {
+      Alert.alert('Invalid height', 'Please enter a valid height in cm.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    setResponse(null);
+
+    try {
+      const payload = await uploadMeasurements({
+        endpointUrl: ENDPOINT_URL,
+        frontUri,
+        leftSideUri: sideUri ?? undefined,
+        heightCm: parsedHeight,
+        useDepth,
+        depthMaxDim: useDepth && fastDepth ? 640 : undefined,
+      });
+      setResponse(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Request failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <ThemedText type="title">Get Measurements</ThemedText>
+      <ThemedText style={styles.helperText}>
+        Provide a front photo (required), optional side photo, and optional height in cm.
+      </ThemedText>
+
+      <ThemedView style={styles.section}>
+        <ThemedText type="subtitle">Front photo (required)</ThemedText>
+        <View style={styles.buttonRow}>
+          <Pressable style={styles.button} onPress={() => pickImage('library', 'front')}>
+            <ThemedText style={styles.buttonText}>Choose Photo</ThemedText>
+          </Pressable>
+          <Pressable style={styles.button} onPress={() => pickImage('camera', 'front')}>
+            <ThemedText style={styles.buttonText}>Take Photo</ThemedText>
+          </Pressable>
+        </View>
+        {frontUri ? <Image source={{ uri: frontUri }} style={styles.preview} /> : null}
+      </ThemedView>
+
+      <ThemedView style={styles.section}>
+        <ThemedText type="subtitle">Side photo (optional)</ThemedText>
+        <View style={styles.buttonRow}>
+          <Pressable style={styles.button} onPress={() => pickImage('library', 'side')}>
+            <ThemedText style={styles.buttonText}>Choose Photo</ThemedText>
+          </Pressable>
+          <Pressable style={styles.button} onPress={() => pickImage('camera', 'side')}>
+            <ThemedText style={styles.buttonText}>Take Photo</ThemedText>
+          </Pressable>
+        </View>
+        {sideUri ? <Image source={{ uri: sideUri }} style={styles.preview} /> : null}
+      </ThemedView>
+
+      <ThemedView style={styles.section}>
+        <ThemedText type="subtitle">Height (cm, optional)</ThemedText>
+        <TextInput
+          style={styles.input}
+          keyboardType="numeric"
+          placeholder="e.g. 170"
+          value={heightCm}
+          onChangeText={setHeightCm}
+        />
+      </ThemedView>
+
+      <ThemedView style={styles.section}>
+        <ThemedText type="subtitle">Depth estimation (optional)</ThemedText>
+        <View style={styles.toggleRow}>
+          <ThemedText>Enable depth for higher accuracy</ThemedText>
+          <Switch value={useDepth} onValueChange={setUseDepth} />
+        </View>
+        <ThemedText style={styles.helperText}>
+          Depth can be slower and may time out on large images.
         </ThemedText>
       </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+
+      {useDepth ? (
+        <ThemedView style={styles.section}>
+          <ThemedText type="subtitle">Depth speed (optional)</ThemedText>
+          <View style={styles.toggleRow}>
+            <ThemedText>Fast mode (downscale input)</ThemedText>
+            <Switch value={fastDepth} onValueChange={setFastDepth} />
+          </View>
+          <ThemedText style={styles.helperText}>
+            Fast mode reduces resolution to 640px on the long edge.
+          </ThemedText>
+        </ThemedView>
+      ) : null}
+
+      <Pressable style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]} onPress={handleSubmit} disabled={isSubmitting}>
+        {isSubmitting ? (
+          <ActivityIndicator color="#ffffff" />
+        ) : (
+          <ThemedText style={styles.submitText}>Submit</ThemedText>
+        )}
+      </Pressable>
+
+      {error ? (
+        <ThemedText style={styles.errorText}>{error}</ThemedText>
+      ) : null}
+
+      {response ? (
+        <View style={styles.responseBox}>
+          <ThemedText type="subtitle">Response</ThemedText>
+          <ThemedText style={styles.responseText}>
+            {JSON.stringify(response, null, 2)}
+          </ThemedText>
+        </View>
+      ) : null}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  container: {
+    flexGrow: 1,
+    padding: 20,
+    gap: 16,
+  },
+  helperText: {
+    opacity: 0.7,
+  },
+  section: {
+    gap: 10,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  button: {
+    backgroundColor: '#1f6feb',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  preview: {
+    height: 180,
+    borderRadius: 12,
+    marginTop: 10,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#c7c7c7',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#ffffff',
+  },
+  submitButton: {
+    backgroundColor: '#0f62fe',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  submitButtonDisabled: {
+    opacity: 0.7,
+  },
+  submitText: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  responseBox: {
+    borderWidth: 1,
+    borderColor: '#d4d4d4',
+    borderRadius: 10,
+    padding: 12,
     gap: 8,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  responseText: {
+    fontFamily: 'monospace',
+    fontSize: 12,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  errorText: {
+    color: '#b42318',
   },
 });
